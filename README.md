@@ -1,32 +1,18 @@
-# _Sample project_
+Описание реализации
 
-(See the README.md file in the upper level 'examples' directory for more information about examples.)
+Архитектура уровней
+-Физический уровень — отдельная задача читает события UART (прерывания генерируют `uart_driver_install`) и превращает поток байтов в куски фиксированной длины. Передача работает из этой же задачи: кадр готовится заранее, дальше просто отправляем его через `uart_write_bytes`.
+-Канальный уровень — собственная задача обслуживает две очереди: из транспортного уровня получает логические сообщения и упаковывает их в кадр (`FA ll hh crc FB ... crc FE`), а из физического уровня — куски байтов, которые собирает в буфер и извлекает кадры целиком (проверяем обе CRC и стоп-байт).
+-Транспортный уровень — ещё одна задача следит за очередью исходящих запросов и отправляет их вниз, а для входящих сообщений вызывает обработчики либо разблокирует ожидающие запросы. Каждая структура `RpcMessage` содержит вложенные данные всех уровней, поэтому легко проследить путь сообщения сверху вниз и обратно.
 
-This is the simplest buildable example. The example is used by command `idf.py create-project`
-that copies the project to user specified path and set it's name. For more information follow the [docs page](https://docs.espressif.com/projects/esp-idf/en/latest/api-guides/build-system.html#start-a-new-project)
+API уровня приложения
+1. Создаём `rpc::RpcProtocol` и настраиваем `RpcProtocolConfig` (порт UART, выводы, глубины очередей, таймаут ответа).
+2. Вызываем `init` — драйвер UART станет генерировать события приёмника в прерывании, а все задачи запустятся автоматически.
+3. Регистрируем обработчики через `registerHandler`. Функция получает буфер аргументов и должна заполнить ответ (возвращает `true` при успехе).
+4. Синхронный вызов реализован методом `sendRequest`: он формирует сообщение, ждёт ответ (по номеру последовательности) и возвращает полезную нагрузку либо таймаут.
 
-
-
-## How to use example
-We encourage the users to use the example as a template for the new projects.
-A recommended way is to follow the instructions on a [docs page](https://docs.espressif.com/projects/esp-idf/en/latest/api-guides/build-system.html#start-a-new-project).
-
-## Example folder contents
-
-The project **sample_project** contains one source file in C language [main.c](main/main.c). The file is located in folder [main](main).
-
-ESP-IDF projects are built using CMake. The project build configuration is contained in `CMakeLists.txt`
-files that provide set of directives and instructions describing the project's source files and targets
-(executable, library, or both). 
-
-Below is short explanation of remaining files in the project folder.
-
-```
-├── CMakeLists.txt
-├── main
-│   ├── CMakeLists.txt
-│   └── main.c
-└── README.md                  This is the file you are currently reading
-```
-Additionally, the sample project contains Makefile and component.mk files, used for the legacy Make based build system. 
-They are not used or needed when building with CMake and idf.py.
+Ограничения и идеи для улучшения
+- Функциональные имена ограничены 24 байтами, полезная нагрузка — 192 байтами. Для передачи больших сообщений можно расширить буферы и добавить поле «фрагмент/последний».
+- Используется CRC8 как на заголовок, так и на весь кадр. Для линий с помехами лучше заменить на CRC16/CRC32.
+- Обработчики хранятся в статическом массиве на 8 записей. Если нужно больше функций, стоит сделать список или таблицу с хешем имени.
+- Нет повторной передачи при потере ответа. Для повышенной надёжности можно добавить счётчик ретраев и механизм подтверждений.
